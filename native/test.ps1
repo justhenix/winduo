@@ -1,4 +1,4 @@
-param([string]$Exe = "$PSScriptRoot/../artifacts/native-x64/WinDuo.exe", [switch]$LivePreview)
+param([string]$Exe = "$PSScriptRoot/../artifacts/native-x64/WinDuo.exe", [switch]$LiveEffect)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Drawing
 Add-Type @'
@@ -48,15 +48,11 @@ try {
     $window=Find-AppWindow $app.Id 'WinDuo.Native.Accessory'
     $settings=Find-AppWindow $app.Id 'WinDuo.Native.Settings'
     if(!$window -or !$settings -or ![NativeAppTest]::IsWindowVisible($settings)){throw 'Second launch did not open Settings.'}
-    $preview=[NativeAppTest]::GetDlgItem($settings,104)
-    if([NativeAppTest]::IsWindowVisible($preview)){throw 'Preview visible by default.'}
-    Send-Command $settings 108
-    if(![NativeAppTest]::IsWindowVisible($preview)){throw 'Preview opt-in did not reveal its button.'}
-    Send-Command $settings 108
-    if([NativeAppTest]::IsWindowVisible($preview)){throw 'Preview opt-out failed.'}
+    if([NativeAppTest]::GetDlgItem($settings,104) -ne [IntPtr]::Zero){throw 'Unexpected demo surface.'}
     Send-Command $settings 101
     if([NativeAppTest]::SendMessage([NativeAppTest]::GetDlgItem($settings,101),240,0,0) -ne 0){throw 'Enable did not disable.'}
     Send-Command $settings 101
+    if([NativeAppTest]::SendMessage([NativeAppTest]::GetDlgItem($settings,101),240,0,0) -ne 1){throw 'Enable did not restore.'}
     $strength=[NativeAppTest]::GetDlgItem($settings,105)
     [NativeAppTest]::SendMessage($strength,335,1,0)|Out-Null
     [NativeAppTest]::SendMessage($strength,334,1,0)|Out-Null
@@ -82,18 +78,17 @@ try {
     $app.WaitForExit()
     Copy-Item artifacts/smoke-test.txt artifacts/native-settings-test.txt -Force
 } finally {if(!$app.HasExited){$w=Find-AppWindow $app.Id 'WinDuo.Native.Accessory';if($w){Send-Command $w 103};$app.WaitForExit()}}
-if ($LivePreview) {
+if ($LiveEffect) {
 $app=Start-Process $Exe -ArgumentList '--smoke-test' -WindowStyle Hidden -PassThru
 try {
     Start-Sleep -Milliseconds 700
     $window=Find-AppWindow $app.Id 'WinDuo.Native.Accessory'
     if(!$window){throw 'Test app window unavailable.'}
-    Send-Command $window 108
     Send-Command $window 104
     $app.WaitForExit()
     Copy-Item artifacts/smoke-test.txt artifacts/native-effect-test.txt -Force
     Get-Content artifacts/native-effect-test.txt
-    if((Get-Content artifacts/native-effect-test.txt -Raw) -notmatch 'PASS captures=\d+ presented=[1-9]'){throw 'Live preview produced no frames; check panel/fullscreen status.'}
+    if((Get-Content artifacts/native-effect-test.txt -Raw) -notmatch 'PASS captures=\d+ presented=[1-9]'){throw 'Live effect produced no frames; check panel/fullscreen status.'}
 } finally {if(!$app.HasExited){Send-Command $window 103;$app.WaitForExit()}}
 }
-Write-Output 'PASS Native idle, settings and single-instance checks. Live preview runs only with -LivePreview.'
+Write-Output 'PASS Native idle, settings and single-instance checks. Live effect runs only with -LiveEffect.'

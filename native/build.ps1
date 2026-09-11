@@ -9,6 +9,6 @@ $developer=Join-Path $vs 'Common7/Tools/Launch-VsDevShell.ps1'
 $output=Join-Path $root "artifacts/native-$Architecture"
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 $exe=Join-Path $output 'WinDuo.exe'
-& cl.exe /nologo /std:c++20 /O2 /MT /EHsc /W4 /utf-8 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DNDEBUG /GL /Gy (Join-Path $PSScriptRoot 'app.cpp') "/Fo$output/" "/Fe$exe" /link /SUBSYSTEM:WINDOWS /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT /MANIFEST:EMBED "/MANIFESTINPUT:$root/app.manifest" user32.lib gdi32.lib shell32.lib advapi32.lib ole32.lib runtimeobject.lib windowsapp.lib wtsapi32.lib powrprof.lib comctl32.lib d3d11.lib dxgi.lib bcrypt.lib
+& cl.exe /nologo /std:c++20 /O2 /MT /EHsc /W4 /utf-8 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DNDEBUG /GL /Gy (Join-Path $PSScriptRoot 'app.cpp') "/Fo$output/" "/Fe$exe" /link /SUBSYSTEM:WINDOWS /LTCG /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT /DELAYLOAD:MF.dll /DELAYLOAD:MFPlat.dll /DELAYLOAD:MFReadWrite.dll /MANIFEST:EMBED "/MANIFESTINPUT:$root/app.manifest" user32.lib gdi32.lib shell32.lib advapi32.lib ole32.lib runtimeobject.lib windowsapp.lib wtsapi32.lib powrprof.lib comctl32.lib d3d11.lib dxgi.lib bcrypt.lib d2d1.lib dxguid.lib mfplat.lib mfreadwrite.lib mfuuid.lib mf.lib dwmapi.lib uxtheme.lib delayimp.lib
 if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
 Write-Output $exe

@@ -39,28 +39,26 @@ inline std::filesystem::path folder() {
     auto p = std::filesystem::path(raw) / L"WinDuo"; CoTaskMemFree(raw); std::filesystem::create_directories(p); return p;
 }
 struct Settings {
-    bool enabled=true, normal=false, lockBlur=false, startup=true, preview=false;
+    bool enabled=true, normal=false, lockBlur=false, startup=true, holdAwake=true, webcam=false;
+    std::wstring camera;
+    double openMean=0,openDelta=0,closedMean=0,closedDelta=0;
+    bool calibratedOpen=false,calibratedClosed=false;
     void load() {
         auto ini=folder()/L"settings.ini";
-        if (std::filesystem::exists(ini)) {
-            auto read=[&](const wchar_t* key, int value) {return GetPrivateProfileIntW(L"WinDuo",key,value,ini.c_str())!=0;};
-            enabled=read(L"Enabled",1); normal=read(L"Normal",0); lockBlur=read(L"LockBlur",0); startup=read(L"Startup",1); preview=read(L"Preview",0);
-        } else {
-            // Import the previous managed build's preferences once; leave its recovery files intact.
-            std::ifstream file(folder()/L"settings.json");
-            if (file) try {
-                std::string text((std::istreambuf_iterator<char>(file)),{});
-                auto json=winrt::Windows::Data::Json::JsonObject::Parse(winrt::to_hstring(text));
-                enabled=json.GetNamedBoolean(L"Enabled",true); normal=json.GetNamedBoolean(L"NormalStrength",false);
-                lockBlur=json.GetNamedBoolean(L"LockScreenBlur",false); startup=json.GetNamedBoolean(L"StartWithWindows",true);
-                preview=json.GetNamedBoolean(L"ShowPreviewMenu",false);
-            } catch (...) {}
-        }
+        auto read=[&](const wchar_t* k,int d){return GetPrivateProfileIntW(L"WinDuo",k,d,ini.c_str())!=0;};
+        enabled=read(L"Enabled",1);normal=read(L"Normal",0);lockBlur=read(L"LockBlur",0);startup=read(L"Startup",1);
+        holdAwake=read(L"HoldAwake",1);webcam=read(L"Webcam",0);calibratedOpen=read(L"CalibratedOpen",0);calibratedClosed=read(L"CalibratedClosed",0);
+        wchar_t value[4096]{};GetPrivateProfileStringW(L"WinDuo",L"Camera",L"",value,4096,ini.c_str());camera=value;
+        auto number=[&](const wchar_t* k){GetPrivateProfileStringW(L"WinDuo",k,L"0",value,4096,ini.c_str());double n=wcstod(value,nullptr);return std::isfinite(n)?n:0;};
+        openMean=number(L"OpenMean");openDelta=number(L"OpenDelta");closedMean=number(L"ClosedMean");closedDelta=number(L"ClosedDelta");
     }
     void save() const {
         auto ini=folder()/L"settings.ini";
-        auto write=[&](const wchar_t* key, bool value){check(WritePrivateProfileStringW(L"WinDuo",key,value?L"1":L"0",ini.c_str()),L"Could not save settings.");};
-        write(L"Enabled",enabled); write(L"Normal",normal); write(L"LockBlur",lockBlur); write(L"Startup",startup); write(L"Preview",preview);
+        auto text=[&](const wchar_t* k,const std::wstring& v){check(WritePrivateProfileStringW(L"WinDuo",k,v.c_str(),ini.c_str()),L"Could not save settings.");};
+        auto bit=[&](const wchar_t* k,bool v){text(k,v?L"1":L"0");};
+        bit(L"Enabled",enabled);bit(L"Normal",normal);bit(L"LockBlur",lockBlur);bit(L"Startup",startup);bit(L"HoldAwake",holdAwake);bit(L"Webcam",webcam);
+        bit(L"CalibratedOpen",calibratedOpen);bit(L"CalibratedClosed",calibratedClosed);text(L"Camera",camera);
+        text(L"OpenMean",std::to_wstring(openMean));text(L"OpenDelta",std::to_wstring(openDelta));text(L"ClosedMean",std::to_wstring(closedMean));text(L"ClosedDelta",std::to_wstring(closedDelta));
     }
 };
 inline void startup(bool enable) {
@@ -79,17 +77,17 @@ struct Curve {
 };
 struct LidInput {
     int state=-1;
-    double pending=0,expires=0;
-    void reset(){state=-1;pending=expires=0;}
+    double pending=0;
+    void reset(){state=-1;pending=0;}
     // Initial notifications establish a baseline, not a gesture.
     bool receive(DWORD value,double time){
         if(value>1)return false;
-        if(value==1){bool changed=state==0;state=1;pending=expires=0;return changed;}
+        if(value==1){bool changed=state==0;state=1;pending=0;return changed;}
         if(state==1)pending=time;
         state=0;return false;
     }
-    bool closeReady(double time){if(pending&&time>=pending){pending=0;expires=time+1.5;return true;}return false;}
-    bool expired(double time){if(expires&&time>=expires){expires=0;return true;}return false;}
+    bool closeReady(double time){if(pending&&time>=pending){pending=0;return true;}return false;}
+
 };
 struct Frame {int width=0,height=0;std::vector<uint32_t> pixels; Frame()=default;Frame(int w,int h):width(w),height(h),pixels(size_t(w)*h){};};
 inline bool sameRect(RECT a,RECT b){return EqualRect(&a,&b)!=0;}

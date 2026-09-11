@@ -1,7 +1,12 @@
-WinDuo 0.2.2
+WinDuo 0.3.0
 
-- Ease out on lid-open without abruptly hiding the overlay.
-- Keep 600 ms close / 400 ms open easing for binary lid input.
-- Preserve Preview as the optional manual hinge demo; never run it on launch.
+- Ctrl+Alt+Space or a tray click toggles a reversible virtual hinge.
+- Removed the old demo menu, checkbox and timed sequence.
+- ACPI close/open uses 500/400 ms easing with an optional 1.5-second awake request.
+- Direct2D Gaussian blur runs on D3D11, with a software fallback.
+- Dark native Settings includes strength, startup and opt-in lock wallpaper recovery.
+- Experimental webcam input is off by default; front camera auto-selection or explicit camera selection.
+- Camera calibration, median spike rejection, 250 ms filtering, and idle/fullscreen/lid shutdown keep sampling bounded and local.
+- Added CMake x64 Release output at out/WinDuo.exe and native regression checks.
 
-This PC exposes an ACPI lid switch, but no Windows hinge-angle or IMU sensor. Partial lid movement cannot drive this fallback; Windows may turn the panel off at closure.
+The webcam signal is a lighting-based approximation, not measured hinge angle. Sampling stops after three seconds at idle; re-enable or calibrate to restart. Awake requests cannot guarantee overriding Windows lid sleep. Camera hardware behavior and lock wallpaper personalization still need testing on the target device.
