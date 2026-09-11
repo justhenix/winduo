@@ -1,9 +1,7 @@
-WinDuo 0.2.1
+WinDuo 0.2.2
 
-- Fix Slight/Normal dropdown resetting when opened.
-- Preserve the known lid state after Preview, pause and display changes, so the next real close is not ignored.
-- Remove the extra 120 ms delay before responding to Windows lid-close signals.
-- Show the last Windows lid state in Settings; check registration failures.
-- Keep stale-frame cancellation, automatic timeout and no automatic previews.
+- Ease out on lid-open without abruptly hiding the overlay.
+- Keep 600 ms close / 400 ms open easing for binary lid input.
+- Preserve Preview as the optional manual hinge demo; never run it on launch.
 
-Most Windows laptops report only open/closed, not hinge angle. Partial lid movement cannot drive the effect without a live sensor, and Windows may turn the panel off immediately at closure.
+This PC exposes an ACPI lid switch, but no Windows hinge-angle or IMU sensor. Partial lid movement cannot drive this fallback; Windows may turn the panel off at closure.
