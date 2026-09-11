@@ -27,12 +27,12 @@ inline Frame resize(const Frame& f,int width){
     }
     return result;
 }
-inline Frame blur(const Frame& source,double progress,bool normal){
+inline Frame blur(const Frame& source,double progress,int strength){
     progress=std::clamp(progress,0.0,1.0);if(progress==0)return source;
     auto small=resize(source,320);auto horizontal=small;auto soft=small;
-    double sigma=(normal?16:12)*source.height/1080.0*small.width/source.width*progress;
+    double sigma=blurSigma(strength)*source.height/1080.0*small.width/source.width*progress;
     rows(small.height,[&](int y){
-        double spread=std::max(.25,sigma*(1-.7*y/std::max(1,small.height-1)));int radius=int(std::ceil(3*spread));
+        double spread=std::max(.25,sigma*(1-.35*y/std::max(1,small.height-1)));int radius=int(std::ceil(3*spread));
         std::vector<double> kernel(2*radius+1);double sum=0;
         for(int k=-radius;k<=radius;++k)sum+=(kernel[k+radius]=std::exp(-k*k/(2*spread*spread)));
         for(auto& v:kernel)v/=sum;
@@ -42,11 +42,11 @@ inline Frame blur(const Frame& source,double progress,bool normal){
         }
     });
     rows(small.height,[&](int y){
-        double spread=std::max(.25,sigma*(1-.7*y/std::max(1,small.height-1)));int radius=int(std::ceil(3*spread));std::vector<double> kernel(2*radius+1);double sum=0;
+        double spread=std::max(.25,sigma*(1-.35*y/std::max(1,small.height-1)));int radius=int(std::ceil(3*spread));std::vector<double> kernel(2*radius+1);double sum=0;
         for(int k=-radius;k<=radius;++k)sum+=(kernel[k+radius]=std::exp(-k*k/(2*spread*spread)));for(auto& v:kernel)v/=sum;
         for(int x=0;x<small.width;++x){uint32_t pixel=0xff000000;for(int c=0;c<3;++c){double value=0;for(int k=-radius;k<=radius;++k)value+=((horizontal.pixels[size_t(std::clamp(y+k,0,small.height-1))*small.width+x]>>(c*8))&255)*kernel[k+radius];pixel|=uint32_t(std::round(value))<<(c*8);}soft.pixels[size_t(y)*small.width+x]=pixel;}
     });
-    Frame result(source.width,source.height);int weight=int(256*progress),brightness=int(256*(1-(normal?.13:.09)*progress));
+    Frame result(source.width,source.height);int weight=int(256*progress),brightness=int(256*(1-blurDim(strength)*progress));
     std::vector<int> columns(source.width),fractions(source.width);
     for(int x=0;x<source.width;++x){double sx=std::clamp((x+.5)*soft.width/source.width-.5,0.0,double(soft.width-1));columns[x]=int(sx);fractions[x]=int((sx-columns[x])*256);}
     rows(source.height,[&](int y){

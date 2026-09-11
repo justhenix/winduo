@@ -24,21 +24,21 @@ class GpuBlur {
 public:
     bool usingGpu() const {return device!=nullptr&&!failed;}
     void clear(){gaussian.Reset();input.Reset();bitmap.Reset();staging.Reset();target.Reset();draw.Reset();d2d.Reset();factory.Reset();context.Reset();device.Reset();width=height=0;}
-    Frame render(const Frame& source,double p,bool normal){
-        if(failed)return blur(source,p,normal);
+    Frame render(const Frame& source,double p,int strength){
+        if(failed)return blur(source,p,strength);
         try {
             if(width!=source.width||height!=source.height){clear();initialize(source.width,source.height);}
             winrt::check_hresult(input->CopyFromMemory(nullptr,source.pixels.data(),source.width*4));
-            winrt::check_hresult(gaussian->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,float((normal?16:12)*height/1080.0*p)));
+            winrt::check_hresult(gaussian->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,float(blurSigma(strength)*height/1080.0*p)));
             draw->BeginDraw();draw->Clear(D2D1::ColorF(0,0,0,1));draw->DrawImage(gaussian.Get());winrt::check_hresult(draw->EndDraw());
             context->CopyResource(staging.Get(),target.Get());Frame result(width,height);D3D11_MAPPED_SUBRESOURCE mapped{};winrt::check_hresult(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped));
             for(int y=0;y<height;++y){auto pixels=reinterpret_cast<const uint32_t*>(static_cast<const BYTE*>(mapped.pData)+size_t(y)*mapped.RowPitch);
-                double weight=p*(1-.7*y/std::max(1,height-1)),dim=1-(normal?.13:.09)*p;
+                double weight=p*(1-.35*y/std::max(1,height-1)),dim=1-blurDim(strength)*p;
                 for(int x=0;x<width;++x){auto original=source.pixels[size_t(y)*width+x],soft=pixels[x];uint32_t out=0xff000000;
                     for(int c=0;c<3;++c){int shift=c*8;out|=uint32_t((((original>>shift)&255)*(1-weight)+((soft>>shift)&255)*weight)*dim)<<shift;}result.pixels[size_t(y)*width+x]=out;
                 }
             }context->Unmap(staging.Get(),0);return result;
-        }catch(...){clear();failed=true;return blur(source,p,normal);}
+        }catch(...){clear();failed=true;return blur(source,p,strength);}
     }
 };
 }

@@ -1,4 +1,4 @@
-param([string]$Exe = "$PSScriptRoot/../artifacts/native-x64/WinDuo.exe", [switch]$LiveEffect)
+param([string]$Exe = "$PSScriptRoot/../out/WinDuo.exe", [switch]$LiveEffect)
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Drawing
 Add-Type @'
@@ -54,15 +54,11 @@ try {
     Send-Command $settings 101
     if([NativeAppTest]::SendMessage([NativeAppTest]::GetDlgItem($settings,101),240,0,0) -ne 1){throw 'Enable did not restore.'}
     $strength=[NativeAppTest]::GetDlgItem($settings,105)
-    [NativeAppTest]::SendMessage($strength,335,1,0)|Out-Null
-    [NativeAppTest]::SendMessage($strength,334,1,0)|Out-Null
-    [NativeAppTest]::SendMessage($settings,273,((7 -shl 16) -bor 105),$strength)|Out-Null
-    if([NativeAppTest]::SendMessage($strength,327,0,0) -ne 1){throw 'Dropdown notification reset selection.'}
-    [NativeAppTest]::SendMessage($settings,273,((1 -shl 16) -bor 105),$strength)|Out-Null
-    if([NativeAppTest]::SendMessage($strength,327,0,0) -ne 1){throw 'Normal selection did not apply.'}
-    [NativeAppTest]::SendMessage($strength,334,0,0)|Out-Null
-    [NativeAppTest]::SendMessage($settings,273,((1 -shl 16) -bor 105),$strength)|Out-Null
-    [NativeAppTest]::SendMessage($strength,335,0,0)|Out-Null
+    foreach($level in @(0,1,2,1)) {
+        [NativeAppTest]::SendMessage($strength,1029,1,$level)|Out-Null
+        [NativeAppTest]::SendMessage($settings,276,5,$strength)|Out-Null
+        if([NativeAppTest]::SendMessage($strength,1024,0,0) -ne $level){throw 'Blur slider did not retain its level.'}
+    }
     Send-Command $settings 107
     Send-Command $settings 107
     Send-Command $settings 106

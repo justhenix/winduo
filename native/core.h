@@ -38,15 +38,18 @@ inline std::filesystem::path folder() {
     PWSTR raw{}; winrt::check_hresult(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &raw));
     auto p = std::filesystem::path(raw) / L"WinDuo"; CoTaskMemFree(raw); std::filesystem::create_directories(p); return p;
 }
+inline double blurSigma(int strength){return strength<=0?24:strength==1?40:64;}
+inline double blurDim(int strength){return strength<=0?.09:strength==1?.12:.15;}
 struct Settings {
-    bool enabled=true, normal=false, lockBlur=false, startup=true, holdAwake=true, webcam=false;
+    int strength=1;
+    bool enabled=true, lockBlur=false, startup=true, holdAwake=true, webcam=false;
     std::wstring camera;
     double openMean=0,openDelta=0,closedMean=0,closedDelta=0;
     bool calibratedOpen=false,calibratedClosed=false;
     void load() {
         auto ini=folder()/L"settings.ini";
         auto read=[&](const wchar_t* k,int d){return GetPrivateProfileIntW(L"WinDuo",k,d,ini.c_str())!=0;};
-        enabled=read(L"Enabled",1);normal=read(L"Normal",0);lockBlur=read(L"LockBlur",0);startup=read(L"Startup",1);
+        enabled=read(L"Enabled",1);strength=std::clamp(int(GetPrivateProfileIntW(L"WinDuo",L"Strength",1,ini.c_str())),0,2);lockBlur=read(L"LockBlur",0);startup=read(L"Startup",1);
         holdAwake=read(L"HoldAwake",1);webcam=read(L"Webcam",0);calibratedOpen=read(L"CalibratedOpen",0);calibratedClosed=read(L"CalibratedClosed",0);
         wchar_t value[4096]{};GetPrivateProfileStringW(L"WinDuo",L"Camera",L"",value,4096,ini.c_str());camera=value;
         auto number=[&](const wchar_t* k){GetPrivateProfileStringW(L"WinDuo",k,L"0",value,4096,ini.c_str());double n=wcstod(value,nullptr);return std::isfinite(n)?n:0;};
@@ -56,7 +59,7 @@ struct Settings {
         auto ini=folder()/L"settings.ini";
         auto text=[&](const wchar_t* k,const std::wstring& v){check(WritePrivateProfileStringW(L"WinDuo",k,v.c_str(),ini.c_str()),L"Could not save settings.");};
         auto bit=[&](const wchar_t* k,bool v){text(k,v?L"1":L"0");};
-        bit(L"Enabled",enabled);bit(L"Normal",normal);bit(L"LockBlur",lockBlur);bit(L"Startup",startup);bit(L"HoldAwake",holdAwake);bit(L"Webcam",webcam);
+        bit(L"Enabled",enabled);text(L"Strength",std::to_wstring(strength));bit(L"LockBlur",lockBlur);bit(L"Startup",startup);bit(L"HoldAwake",holdAwake);bit(L"Webcam",webcam);
         bit(L"CalibratedOpen",calibratedOpen);bit(L"CalibratedClosed",calibratedClosed);text(L"Camera",camera);
         text(L"OpenMean",std::to_wstring(openMean));text(L"OpenDelta",std::to_wstring(openDelta));text(L"ClosedMean",std::to_wstring(closedMean));text(L"ClosedDelta",std::to_wstring(closedDelta));
     }

@@ -15,7 +15,7 @@ class App {
 public:
     HWND window{},settingsWindow{},overlay{};HPOWERNOTIFY power{};NOTIFYICONDATAW tray{};HFONT font{};
     Settings prefs;Curve curve;std::optional<RECT> bounds;std::unique_ptr<Dib> dib;std::unique_ptr<Wallpaper> wallpaper;
-    std::mutex mutex;std::condition_variable wake;std::thread renderer;bool stop=false,job=false,clearCapture=false;RECT jobRect{};double jobProgress{};bool jobNormal{},jobSnapshot{};unsigned jobEpoch{};
+    std::mutex mutex;std::condition_variable wake;std::thread renderer;bool stop=false,job=false,clearCapture=false;RECT jobRect{};double jobProgress{};int jobStrength=1;bool jobSnapshot{};unsigned jobEpoch{};
     std::unique_ptr<RenderResult> result;bool busy=false,locked=false,suspended=false,manual=false,armed=false;unsigned epoch=0;LidInput lid;double hold=0;Frame cached;
     bool smoke=false,testEffect=false;double firstFrame=0,lastFrame=0;double started=now();int captures=0,presents=0,activations=0;std::wstring status=L"Ready";UINT taskbarCreated=RegisterWindowMessageW(L"TaskbarCreated");
     HBRUSH background=CreateSolidBrush(RGB(24,24,26)),surface=CreateSolidBrush(RGB(38,38,42));
@@ -47,8 +47,8 @@ public:
     void reset(){curve.clear();lid.pending=0;manual=false;stopCamera();hide();hold=0;SetThreadExecutionState(ES_CONTINUOUS);restore();}
     void detect(){reset();if(overlay){DestroyWindow(overlay);overlay=nullptr;}dib.reset();cached={};bounds=panel();report(bounds?L"Lid input: open/closed only, not hinge angle.":L"No separate internal panel. Effect paused.");}
     void renderLoop(){Capture capture;GpuBlur gpu;
-        for(;;){RECT area;double progress;bool strong,snapshot;unsigned version;
-            {std::unique_lock lock(mutex);wake.wait(lock,[&]{return stop||job||clearCapture;});if(stop)break;if(clearCapture){capture.clear();gpu.clear();clearCapture=false;}if(!job)continue;area=jobRect;progress=jobProgress;strong=jobNormal;snapshot=jobSnapshot;version=jobEpoch;job=false;}
+        for(;;){RECT area;double progress;int strong;bool snapshot;unsigned version;
+            {std::unique_lock lock(mutex);wake.wait(lock,[&]{return stop||job||clearCapture;});if(stop)break;if(clearCapture){capture.clear();gpu.clear();clearCapture=false;}if(!job)continue;area=jobRect;progress=jobProgress;strong=jobStrength;snapshot=jobSnapshot;version=jobEpoch;job=false;}
             auto output=std::make_unique<RenderResult>();output->epoch=version;
             try{double start=now();auto source=capture.get(area);output->captureMs=(now()-start)*1000;start=now();if(snapshot)output->snapshot=resize(source,960);output->image=gpu.render(source,progress,strong);output->renderMs=(now()-start)*1000;}catch(...){output->error=L"Capture unavailable. WinDuo paused.";}
             {std::lock_guard lock(mutex);result=std::move(output);}PostMessageW(window,FrameMessage,0,0);
@@ -68,23 +68,23 @@ public:
         if(!prefs.enabled||locked||suspended||!bounds||fullscreen(*bounds)){hide();SetTimer(window,1,250,nullptr);return;}
         SetTimer(window,1,16,nullptr);if(busy||p<=.001)return;
         if(!overlay){overlay=CreateWindowExW(WS_EX_LAYERED|WS_EX_TRANSPARENT|WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,L"STATIC",L"",WS_POPUP,bounds->left,bounds->top,bounds->right-bounds->left,bounds->bottom-bounds->top,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);check(overlay&&SetWindowDisplayAffinity(overlay,WDA_EXCLUDEFROMCAPTURE),L"Overlay capture exclusion failed.");dib=std::make_unique<Dib>(bounds->right-bounds->left,bounds->bottom-bounds->top);}
-        {std::lock_guard lock(mutex);jobRect=*bounds;jobProgress=p;jobNormal=prefs.normal;jobSnapshot=prefs.lockBlur;jobEpoch=epoch;job=true;busy=true;++captures;wake.notify_one();}
+        {std::lock_guard lock(mutex);jobRect=*bounds;jobProgress=p;jobStrength=prefs.strength;jobSnapshot=prefs.lockBlur;jobEpoch=epoch;job=true;busy=true;++captures;wake.notify_one();}
     }
     void present(){std::unique_ptr<RenderResult> output;{std::lock_guard lock(mutex);output=std::move(result);}busy=false;if(!output||output->epoch!=epoch||locked||!prefs.enabled)return;
         if(!output->error.empty()){reset();prefs.enabled=false;report(output->error);sync();return;}if(!dib||!bounds)return;if(suspended||fullscreen(*bounds)){hide();return;}
         captureTotal+=output->captureMs;renderTotal+=output->renderMs;double presentStart=now();cached=std::move(output->snapshot);memcpy(dib->bits,output->image.pixels.data(),output->image.pixels.size()*4);POINT origin{},position{bounds->left,bounds->top};SIZE size{dib->width,dib->height};BLENDFUNCTION blend{AC_SRC_OVER,0,255,AC_SRC_ALPHA};
         check(UpdateLayeredWindow(overlay,nullptr,&position,&size,dib->dc,&origin,0,&blend,ULW_ALPHA),L"Overlay presentation failed.");ShowWindow(overlay,SW_SHOWNOACTIVATE);if(presents++==0)firstFrame=now();lastFrame=now();
-        presentTotal+=(now()-presentStart)*1000;if(prefs.lockBlur&&!armed&&curve.value(now())>=.7&&wallpaper){armed=true;wallpaper->requestApply(cached,prefs.normal);}tick();
+        presentTotal+=(now()-presentStart)*1000;if(prefs.lockBlur&&!armed&&curve.value(now())>=.7&&wallpaper){armed=true;wallpaper->requestApply(cached,prefs.strength);}tick();
     }
-    void sync(){if(!settingsWindow)return;auto set=[&](int id,bool checked){SendDlgItemMessageW(settingsWindow,id,BM_SETCHECK,checked?BST_CHECKED:BST_UNCHECKED,0);};set(Enable,prefs.enabled);set(LockBlur,prefs.lockBlur);set(Startup,prefs.startup);set(HoldAwake,prefs.holdAwake);set(WebcamId,prefs.webcam);SendDlgItemMessageW(settingsWindow,Strength,CB_SETCURSEL,prefs.normal?1:0,0);for(int id:{CalibrateOpen,CalibrateClosed,CameraId})EnableWindow(GetDlgItem(settingsWindow,id),prefs.webcam);SetWindowTextW(GetDlgItem(settingsWindow,Status),status.c_str());InvalidateRect(settingsWindow,nullptr,TRUE);}
+    void sync(){if(!settingsWindow)return;auto set=[&](int id,bool checked){SendDlgItemMessageW(settingsWindow,id,BM_SETCHECK,checked?BST_CHECKED:BST_UNCHECKED,0);};set(Enable,prefs.enabled);set(LockBlur,prefs.lockBlur);set(Startup,prefs.startup);set(HoldAwake,prefs.holdAwake);set(WebcamId,prefs.webcam);SendDlgItemMessageW(settingsWindow,Strength,TBM_SETPOS,TRUE,prefs.strength);for(int id:{CalibrateOpen,CalibrateClosed,CameraId})EnableWindow(GetDlgItem(settingsWindow,id),prefs.webcam);SetWindowTextW(GetDlgItem(settingsWindow,Status),status.c_str());InvalidateRect(settingsWindow,nullptr,TRUE);}
     void menu(){HMENU menu=CreatePopupMenu();AppendMenuW(menu,MF_STRING|(prefs.enabled?MF_CHECKED:0),Enable,L"Enable");AppendMenuW(menu,MF_STRING,SettingsId,L"Settings");AppendMenuW(menu,MF_STRING,Quit,L"Quit");POINT point;GetCursorPos(&point);SetForegroundWindow(window);int id=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,point.x,point.y,0,window,nullptr);DestroyMenu(menu);PostMessageW(window,WM_NULL,0,0);if(id)command(id,0);}
     void openSettings();
     void command(int id,int notification){
         // Opening/closing the combo must not reset its current selection or dismiss its list.
-        if((id==Strength||id==CameraId)&&notification!=CBN_SELCHANGE)return;
+        if(id==CameraId&&notification!=CBN_SELCHANGE)return;
         switch(id){case Enable:prefs.enabled=!prefs.enabled;if(!prefs.enabled)reset();save();break;
         case SettingsId:openSettings();break;case Quit:DestroyWindow(window);break;case ToggleHinge:toggleHinge();break;
-        case Strength:prefs.normal=SendDlgItemMessageW(settingsWindow,Strength,CB_GETCURSEL,0,0)==1;save();break;
+        case Strength:prefs.strength=std::clamp(int(SendDlgItemMessageW(settingsWindow,Strength,TBM_GETPOS,0,0)),0,2);++epoch;save();break;
         case LockBlur:prefs.lockBlur=!prefs.lockBlur;if(!prefs.lockBlur){restore();cached={};}save();break;
         case Startup:if(!smoke)startup(!prefs.startup);prefs.startup=!prefs.startup;save();break;
         case HoldAwake:prefs.holdAwake=!prefs.holdAwake;if(!prefs.holdAwake){hold=0;SetThreadExecutionState(ES_CONTINUOUS);}save();break;
@@ -107,26 +107,29 @@ LRESULT CALLBACK SettingsProc(HWND hwnd,UINT message,WPARAM w,LPARAM l){auto app
             if(item->CtlType==ODT_BUTTON){bool checkbox=item->CtlID!=Quit&&item->CtlID!=CalibrateOpen&&item->CtlID!=CalibrateClosed;FillRect(item->hDC,&item->rcItem,checkbox?app->background:app->surface);SetBkMode(item->hDC,TRANSPARENT);SetTextColor(item->hDC,(item->itemState&ODS_DISABLED)?RGB(125,125,132):RGB(235,235,238));RECT text=item->rcItem;
             if(checkbox){RECT box{text.left+2,text.top+6,text.left+16,text.top+20};FrameRect(item->hDC,&box,reinterpret_cast<HBRUSH>(GetStockObject(GRAY_BRUSH)));bool checked=item->CtlID==Enable?app->prefs.enabled:item->CtlID==LockBlur?app->prefs.lockBlur:item->CtlID==Startup?app->prefs.startup:item->CtlID==HoldAwake?app->prefs.holdAwake:app->prefs.webcam;if(checked){InflateRect(&box,-3,-3);FillRect(item->hDC,&box,reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));}text.left+=26;}
             wchar_t label[180]{};GetWindowTextW(item->hwndItem,label,180);DrawTextW(item->hDC,label,-1,&text,DT_SINGLELINE|DT_VCENTER|(checkbox?DT_LEFT:DT_CENTER));if(item->itemState&ODS_FOCUS){RECT focus=item->rcItem;InflateRect(&focus,-2,-2);DrawFocusRect(item->hDC,&focus);}return TRUE;}}
+        if(message==WM_HSCROLL&&reinterpret_cast<HWND>(l)==GetDlgItem(hwnd,Strength)){app->command(Strength,0);return 0;}
         if(message==WM_COMMAND){app->command(LOWORD(w),HIWORD(w));return 0;}if(message==WM_CLOSE){ShowWindow(hwnd,SW_HIDE);return 0;}if(message==WM_DPICHANGED){auto r=reinterpret_cast<RECT*>(l);SetWindowPos(hwnd,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER);return 0;}}catch(...){app->report(L"Could not apply setting.");app->sync();}return DefWindowProcW(hwnd,message,w,l);
 }
 void App::openSettings(){++activations;if(!settingsWindow){WNDCLASSW cls{};cls.lpfnWndProc=SettingsProc;cls.hInstance=GetModuleHandleW(nullptr);cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);cls.hbrBackground=background;cls.lpszClassName=L"WinDuo.Native.Settings";RegisterClassW(&cls);
-        int dpi=GetDpiForWindow(window);auto scale=[&](int n){return MulDiv(n,dpi,96);};RECT rect{0,0,scale(430),scale(470)};AdjustWindowRectExForDpi(&rect,WS_CAPTION|WS_SYSMENU,FALSE,WS_EX_TOOLWINDOW,dpi);
+        int dpi=GetDpiForWindow(window);auto scale=[&](int n){return MulDiv(n,dpi,96);};RECT rect{0,0,scale(430),scale(490)};AdjustWindowRectExForDpi(&rect,WS_CAPTION|WS_SYSMENU,FALSE,WS_EX_TOOLWINDOW,dpi);
         settingsWindow=CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_CONTROLPARENT,cls.lpszClassName,L"WinDuo Settings",WS_CAPTION|WS_SYSMENU,CW_USEDEFAULT,CW_USEDEFAULT,rect.right-rect.left,rect.bottom-rect.top,window,nullptr,cls.hInstance,this);
         BOOL dark=TRUE;DwmSetWindowAttribute(settingsWindow,20,&dark,sizeof(dark));if(!smoke)SetWindowDisplayAffinity(settingsWindow,WDA_EXCLUDEFROMCAPTURE);
         auto control=[&](const wchar_t* kind,const wchar_t* text,int id,int x,int y,int width,int height,DWORD style){auto c=CreateWindowExW(0,kind,text,WS_CHILD|WS_VISIBLE|style,scale(x),scale(y),scale(width),scale(height),settingsWindow,reinterpret_cast<HMENU>(INT_PTR(id)),cls.hInstance,nullptr);SendMessageW(c,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);SetWindowTheme(c,L"",L"");return c;};
         control(L"BUTTON",L"Enable WinDuo",Enable,20,16,390,28,BS_AUTOCHECKBOX|WS_TABSTOP);
-        control(L"STATIC",L"Strength",0,20,56,100,24,0);auto combo=control(L"COMBOBOX",L"",Strength,140,52,160,120,CBS_DROPDOWNLIST|CBS_OWNERDRAWFIXED|CBS_HASSTRINGS|WS_TABSTOP);SendMessageW(combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(L"Slight"));SendMessageW(combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(L"Normal"));
-        control(L"BUTTON",L"Lock screen blur",LockBlur,20,90,390,28,BS_AUTOCHECKBOX|WS_TABSTOP);
-        control(L"BUTTON",L"Hold awake ~1.5s on lid close",HoldAwake,20,124,390,28,BS_AUTOCHECKBOX|WS_TABSTOP);
-        control(L"BUTTON",L"Start with Windows",Startup,20,158,390,28,BS_AUTOCHECKBOX|WS_TABSTOP);
-        control(L"BUTTON",L"Experimental (cursed) webcam hinge",WebcamId,20,196,390,28,BS_AUTOCHECKBOX|WS_TABSTOP);
-        control(L"COMBOBOX",L"",CameraId,44,232,366,180,CBS_DROPDOWNLIST|CBS_OWNERDRAWFIXED|CBS_HASSTRINGS|WS_TABSTOP);
-        control(L"BUTTON",L"Calibrate open",CalibrateOpen,44,270,146,30,BS_OWNERDRAW|WS_TABSTOP);
-        control(L"BUTTON",L"Calibrate almost closed",CalibrateClosed,202,270,208,30,BS_OWNERDRAW|WS_TABSTOP);
-        control(L"STATIC",L"LED on = camera on. Frames stay in RAM.\nCamera stops after 3s idle; calibrate to restart.",0,44,311,370,38,0);
-        control(L"STATIC",L"Ctrl+Alt+Space or tray click: close / open",0,20,360,390,24,0);
-        control(L"BUTTON",L"Quit",Quit,20,398,88,30,BS_OWNERDRAW|WS_TABSTOP);
-        control(L"STATIC",L"",Status,122,398,288,60,0);fillCameras();
+        control(L"STATIC",L"Blur level",0,20,56,100,24,0);auto slider=control(TRACKBAR_CLASSW,L"Blur level",Strength,140,48,270,32,TBS_HORZ|TBS_AUTOTICKS|WS_TABSTOP);
+        SendMessageW(slider,TBM_SETRANGE,TRUE,MAKELPARAM(0,2));SendMessageW(slider,TBM_SETPAGESIZE,0,1);SendMessageW(slider,TBM_SETTICFREQ,1,0);
+        control(L"STATIC",L"Low",0,140,83,75,22,0);control(L"STATIC",L"Medium",0,239,83,75,22,0);control(L"STATIC",L"High",0,369,83,45,22,0);
+        control(L"BUTTON",L"Lock screen blur",LockBlur,20,110,390,28,BS_AUTOCHECKBOX|WS_TABSTOP);
+        control(L"BUTTON",L"Hold awake ~1.5s on lid close",HoldAwake,20,144,390,28,BS_AUTOCHECKBOX|WS_TABSTOP);
+        control(L"BUTTON",L"Start with Windows",Startup,20,178,390,28,BS_AUTOCHECKBOX|WS_TABSTOP);
+        control(L"BUTTON",L"Experimental (cursed) webcam hinge",WebcamId,20,216,390,28,BS_AUTOCHECKBOX|WS_TABSTOP);
+        control(L"COMBOBOX",L"",CameraId,44,252,366,180,CBS_DROPDOWNLIST|CBS_OWNERDRAWFIXED|CBS_HASSTRINGS|WS_TABSTOP);
+        control(L"BUTTON",L"Calibrate open",CalibrateOpen,44,290,146,30,BS_OWNERDRAW|WS_TABSTOP);
+        control(L"BUTTON",L"Calibrate almost closed",CalibrateClosed,202,290,208,30,BS_OWNERDRAW|WS_TABSTOP);
+        control(L"STATIC",L"LED on = camera on. Frames stay in RAM.\nCamera stops after 3s idle; calibrate to restart.",0,44,331,370,38,0);
+        control(L"STATIC",L"Ctrl+Alt+Space or tray click: close / open",0,20,380,390,24,0);
+        control(L"BUTTON",L"Quit",Quit,20,418,88,30,BS_OWNERDRAW|WS_TABSTOP);
+        control(L"STATIC",L"",Status,122,418,288,60,0);fillCameras();
     }sync();ShowWindow(settingsWindow,SW_SHOW);SetForegroundWindow(settingsWindow);SetFocus(GetDlgItem(settingsWindow,Enable));}
 LRESULT CALLBACK AppProc(HWND hwnd,UINT message,WPARAM w,LPARAM l){auto app=reinterpret_cast<App*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));if(message==WM_NCCREATE){app=static_cast<App*>(reinterpret_cast<CREATESTRUCTW*>(l)->lpCreateParams);SetWindowLongPtrW(hwnd,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(app));}if(!app)return DefWindowProcW(hwnd,message,w,l);
     try{
@@ -136,7 +139,7 @@ LRESULT CALLBACK AppProc(HWND hwnd,UINT message,WPARAM w,LPARAM l){auto app=rein
         case WM_APP+3:app->report(L"Lock image unavailable; recovery retained if needed.");return 0;
         case TrayMessage:if(l==WM_LBUTTONDOWN)SetTimer(hwnd,2,GetDoubleClickTime(),nullptr);else if(l==WM_LBUTTONDBLCLK){KillTimer(hwnd,2);app->openSettings();}else if(l==WM_RBUTTONUP||l==WM_CONTEXTMENU){KillTimer(hwnd,2);app->menu();}return 0;
         case WM_DISPLAYCHANGE:app->detect();return 0;
-        case WM_WTSSESSION_CHANGE:if(w==WTS_SESSION_LOCK){app->locked=true;app->curve.clear();app->lid.reset();app->manual=false;app->stopCamera();app->hide();SetThreadExecutionState(ES_CONTINUOUS);if(app->prefs.enabled&&app->prefs.lockBlur&&!app->cached.pixels.empty()&&app->wallpaper)app->wallpaper->requestApply(app->cached,app->prefs.normal);}else if(w==WTS_SESSION_UNLOCK){app->locked=false;app->reset();}return 0;
+        case WM_WTSSESSION_CHANGE:if(w==WTS_SESSION_LOCK){app->locked=true;app->curve.clear();app->lid.reset();app->manual=false;app->stopCamera();app->hide();SetThreadExecutionState(ES_CONTINUOUS);if(app->prefs.enabled&&app->prefs.lockBlur&&!app->cached.pixels.empty()&&app->wallpaper)app->wallpaper->requestApply(app->cached,app->prefs.strength);}else if(w==WTS_SESSION_UNLOCK){app->locked=false;app->reset();}return 0;
         case WM_POWERBROADCAST:
             if(w==PBT_POWERSETTINGCHANGE){auto setting=reinterpret_cast<POWERBROADCAST_SETTING*>(l);if(setting&&setting->PowerSetting==LidGuid&&setting->DataLength==sizeof(DWORD)){DWORD open;memcpy(&open,setting->Data,sizeof(open));if(open<=1){bool opened=app->lid.receive(open,now());app->report(open?L"Windows lid state: open (no angle available).":L"Windows lid state: closed.");if(!open)app->stopCamera();if(app->locked||app->suspended||!app->prefs.enabled){app->lid.pending=0;}else{if(opened){app->manual=false;++app->epoch;app->progress(0);app->restore();}if(app->lid.closeReady(now())){app->manual=false;app->progress(1,true);}}}}}
             else if(w==PBT_APMSUSPEND){app->suspended=true;app->reset();}else if(w==PBT_APMRESUMEAUTOMATIC||w==PBT_APMRESUMESUSPEND){app->suspended=false;app->detect();}return TRUE;
@@ -148,17 +151,23 @@ LRESULT CALLBACK AppProc(HWND hwnd,UINT message,WPARAM w,LPARAM l){auto app=rein
 int selfTest(){std::filesystem::create_directories(L"artifacts");std::ofstream log(L"artifacts/self-test.txt");int failed=0;auto test=[&](bool ok,const char* text){log<<(ok?"PASS ":"FAIL ")<<text<<"\n";if(!ok)++failed;};
     LidInput input;input.receive(0,1);test(!input.closeReady(2),"Initial closed notification never triggers blur");input.receive(1,3);input.receive(0,4);input.receive(1,4.05);test(!input.closeReady(5),"Open cancels an unconsumed close event");input.receive(0,6);test(input.closeReady(6),"Close starts immediately without extra debounce delay");test(input.state==0,"Closed baseline persists until lid opens");input.reset();input.receive(0,9);test(!input.closeReady(10),"Unknown initial state never triggers close");input.receive(1,11);input.receive(999,12);test(!input.closeReady(13),"Invalid lid payload is ignored");
     App app;app.smoke=true;app.lid.receive(1,1);app.reset();app.lid.receive(0,2);test(app.lid.closeReady(2),"Pause/reset preserves open baseline for next real close");
-    test(Curve::smooth(-1)==0&&Curve::smooth(2)==1,"Smoothstep bounds");Curve c;c.set(1,0,.6);test(std::abs(c.value(.3)-.5)<1e-6,"Close midpoint");c.set(0,.3,.4);test(std::abs(c.value(.3)-.5)<1e-6&&c.value(.71)==0,"Continuous reversal and open");c.clear();test(c.value(1)==0,"Immediate reset");Settings settings;test(settings.enabled&&settings.startup&&!settings.webcam&&!settings.lockBlur&&!settings.normal,"Accessory defaults");
+    test(Curve::smooth(-1)==0&&Curve::smooth(2)==1,"Smoothstep bounds");Curve c;c.set(1,0,.6);test(std::abs(c.value(.3)-.5)<1e-6,"Close midpoint");c.set(0,.3,.4);test(std::abs(c.value(.3)-.5)<1e-6&&c.value(.71)==0,"Continuous reversal and open");c.clear();test(c.value(1)==0,"Immediate reset");Settings settings;test(settings.enabled&&settings.startup&&!settings.webcam&&!settings.lockBlur&&settings.strength==1,"Accessory defaults");
     Frame frame(960,540);for(int y=0;y<frame.height;++y)for(int x=0;x<frame.width;++x)frame.pixels[size_t(y)*frame.width+x]=0xff000000|((x%20<6)?0:0xeeeeee);
-    test(blur(frame,0,false).pixels==frame.pixels,"Zero strength preserves pixels");auto start=now();auto output=blur(frame,1,false);test(output.pixels[20*960+2]!=frame.pixels[20*960+2],"Gaussian softens stripes");test((output.pixels[20*960+2]&255)>(output.pixels[500*960+2]&255),"Blur tapers toward hinge");test(resize(frame,480).height==270,"Snapshot aspect ratio");test(hash({1,2,3})=="039058C6F2C0CB492C533B0A4D14EF77CC0F78ABCCCED5287D84A1A2011CFB81", "SHA256 recovery fingerprint");
+    test(blur(frame,0,0).pixels==frame.pixels,"Zero strength preserves pixels");auto start=now();auto output=blur(frame,1,0);test(output.pixels[20*960+2]!=frame.pixels[20*960+2],"Gaussian softens stripes");test((output.pixels[20*960+2]&255)>(output.pixels[500*960+2]&255),"Blur tapers toward hinge");test(resize(frame,480).height==270,"Snapshot aspect ratio");test(hash({1,2,3})=="039058C6F2C0CB492C533B0A4D14EF77CC0F78ABCCCED5287D84A1A2011CFB81", "SHA256 recovery fingerprint");
     CameraSignal open{.7,.1},closed{.2,-.2};
     test(cameraProgress(open,open,closed)==0&&cameraProgress(closed,open,closed)==1,"Camera calibration endpoints");
     test(std::abs(cameraProgress({.45,-.05},open,closed)-.5)<1e-6,"Camera calibration midpoint");
     test(cameraProgress(open,open,open)==0,"Identical camera calibration cannot amplify noise");
     CameraFilter filter;filter.push(open,0);filter.push(open,.067);auto stable=filter.push(closed,.134);test(std::abs(stable.mean-open.mean)<1e-6,"Single camera spike rejected");
-    GpuBlur gpu;auto gpuFrame=gpu.render(frame,1,false);test(gpuFrame.pixels[20*960+2]!=frame.pixels[20*960+2],"GPU/fallback Gaussian softens stripes");
+    GpuBlur gpu;auto gpuFrame=gpu.render(frame,1,0);test(gpuFrame.pixels[20*960+2]!=frame.pixels[20*960+2],"GPU/fallback Gaussian softens stripes");
     log<<"Renderer: "<<(gpu.usingGpu()?"Direct2D / D3D11":"CPU fallback")<<"\n";
-    Frame opaque(64,64);std::fill(opaque.pixels.begin(),opaque.pixels.end(),0x00ffffff);auto white=gpu.render(opaque,1,false);test((white.pixels[32*64+32]&255)>220,"GDI zero-alpha input remains visible");
+    Frame opaque(64,64);std::fill(opaque.pixels.begin(),opaque.pixels.end(),0x00ffffff);auto white=gpu.render(opaque,1,0);test((white.pixels[32*64+32]&255)>220,"GDI zero-alpha input remains visible");
+    Frame bands(960,540);for(int y=0;y<540;++y)for(int x=0;x<960;++x)bands.pixels[size_t(y)*960+x]=0xff000000|(x%160<80?0xeeeeee:0x111111);
+    auto contrast=[](const Frame& f){double sum=0;for(int x=1;x<f.width;++x)sum+=std::abs(int(f.pixels[20*f.width+x]&255)-int(f.pixels[20*f.width+x-1]&255));return sum;};
+    auto low=blur(bands,1,0),medium=blur(bands,1,1),high=blur(bands,1,2);
+    test(contrast(low)>contrast(medium)&&contrast(medium)>contrast(high),"Software Low / Medium / High progressively soften edges");
+    low=gpu.render(bands,1,0);medium=gpu.render(bands,1,1);high=gpu.render(bands,1,2);
+    test(contrast(low)>contrast(medium)&&contrast(medium)>contrast(high),"GPU Low / Medium / High progressively soften edges");
     gpu.clear();test(!gpu.usingGpu(),"GPU resources released at idle");
     HWND testWindow=CreateWindowExW(0,L"STATIC",L"",WS_POPUP,0,0,1,1,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);app.window=testWindow;app.bounds=RECT{0,0,960,540};app.toggleHinge();test(app.curve.target==1,"Manual hinge closes");app.toggleHinge();test(app.curve.target==0,"Manual hinge reverses immediately");app.prefs.enabled=false;app.toggleHinge();test(app.curve.target==0,"Disabled hinge ignores input");test(app.hold==0,"Virtual hinge does not request a lid sleep hold");app.prefs.enabled=true;app.prefs.holdAwake=false;SetWindowLongPtrW(testWindow,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(&app));
     AppProc(testWindow,WM_HOTKEY,1,0);test(app.curve.target==1,"Registered hotkey message routes to virtual hinge");
@@ -172,6 +181,7 @@ int selfTest(){std::filesystem::create_directories(L"artifacts");std::ofstream l
 }
 }
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR command,int){
+    INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_BAR_CLASSES};InitCommonControlsEx(&controls);
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);winrt::init_apartment(winrt::apartment_type::single_threaded);
     if(wcsstr(command,L"--self-test"))return selfTest();
     HANDLE mutex=CreateMutexW(nullptr,FALSE,L"Local\\WinDuo.Native.Tray");if(GetLastError()==ERROR_ALREADY_EXISTS){for(int i=0;i<30;++i){if(auto window=FindWindowW(ClassName,nullptr)){DWORD pid;GetWindowThreadProcessId(window,&pid);AllowSetForegroundWindow(pid);PostMessageW(window,ActivateMessage,0,0);break;}Sleep(100);}CloseHandle(mutex);return 0;}
