@@ -13,6 +13,8 @@ $exe=Join-Path $output 'WinDuo.exe'
 if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
 if ($Architecture -eq 'x64') {
     Get-Process WinDuo -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Milliseconds 100
-    Copy-Item -LiteralPath $exe -Destination (Join-Path $root 'out/WinDuo.exe') -Force
+    $outDir = Join-Path $root 'out'
+    New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+    Copy-Item -LiteralPath $exe -Destination (Join-Path $outDir 'WinDuo.exe') -Force
 }
 Write-Output $exe
