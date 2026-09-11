@@ -57,6 +57,16 @@ try {
     Send-Command $settings 101
     if([NativeAppTest]::SendMessage([NativeAppTest]::GetDlgItem($settings,101),240,0,0) -ne 0){throw 'Enable did not disable.'}
     Send-Command $settings 101
+    $strength=[NativeAppTest]::GetDlgItem($settings,105)
+    [NativeAppTest]::SendMessage($strength,335,1,0)|Out-Null
+    [NativeAppTest]::SendMessage($strength,334,1,0)|Out-Null
+    [NativeAppTest]::SendMessage($settings,273,((7 -shl 16) -bor 105),$strength)|Out-Null
+    if([NativeAppTest]::SendMessage($strength,327,0,0) -ne 1){throw 'Dropdown notification reset selection.'}
+    [NativeAppTest]::SendMessage($settings,273,((1 -shl 16) -bor 105),$strength)|Out-Null
+    if([NativeAppTest]::SendMessage($strength,327,0,0) -ne 1){throw 'Normal selection did not apply.'}
+    [NativeAppTest]::SendMessage($strength,334,0,0)|Out-Null
+    [NativeAppTest]::SendMessage($settings,273,((1 -shl 16) -bor 105),$strength)|Out-Null
+    [NativeAppTest]::SendMessage($strength,335,0,0)|Out-Null
     Send-Command $settings 107
     Send-Command $settings 107
     Send-Command $settings 106

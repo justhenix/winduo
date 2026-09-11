@@ -19,8 +19,8 @@ public:
     void save(){if(!smoke)prefs.save();}
     void restore(){armed=false;if(wallpaper)wallpaper->requestRestore();}
     void hide(){++epoch;if(overlay)ShowWindow(overlay,SW_HIDE);}
-    void reset(){curve.clear();lid.reset();manual=false;demo=-1;hide();hold=0;SetThreadExecutionState(ES_CONTINUOUS);restore();}
-    void detect(){reset();if(overlay){DestroyWindow(overlay);overlay=nullptr;}dib.reset();cached={};bounds=panel();report(bounds?L"Ready":L"No separate internal panel. Effect paused.");}
+    void reset(){curve.clear();lid.pending=lid.expires=0;manual=false;demo=-1;hide();hold=0;SetThreadExecutionState(ES_CONTINUOUS);restore();}
+    void detect(){reset();if(overlay){DestroyWindow(overlay);overlay=nullptr;}dib.reset();cached={};bounds=panel();report(bounds?L"Lid input: open/closed only, not hinge angle.":L"No separate internal panel. Effect paused.");}
     void renderLoop(){Capture capture;
         for(;;){RECT area;double progress;bool strong,snapshot;unsigned version;
             {std::unique_lock lock(mutex);wake.wait(lock,[&]{return stop||job||clearCapture;});if(stop)break;if(clearCapture){capture.clear();clearCapture=false;}if(!job)continue;area=jobRect;progress=jobProgress;strong=jobNormal;snapshot=jobSnapshot;version=jobEpoch;job=false;}
@@ -31,7 +31,7 @@ public:
     }
     void addTray(){tray={sizeof(tray)};tray.hWnd=window;tray.uID=1;tray.uFlags=NIF_MESSAGE|NIF_ICON|NIF_TIP;tray.uCallbackMessage=TrayMessage;tray.hIcon=LoadIconW(nullptr,IDI_APPLICATION);wcscpy_s(tray.szTip,L"WinDuo");Shell_NotifyIconW(NIM_ADD,&tray);}
     void initialize(HWND hwnd){window=hwnd;if(!smoke){prefs.load();startup(prefs.startup);save();}font=CreateFontW(-MulDiv(10,GetDpiForWindow(hwnd),72),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,DEFAULT_QUALITY,DEFAULT_PITCH,L"Segoe UI");
-        power=RegisterPowerSettingNotification(window,&LidGuid,DEVICE_NOTIFY_WINDOW_HANDLE);check(WTSRegisterSessionNotification(window,NOTIFY_FOR_THIS_SESSION),L"Session notifications unavailable.");
+        power=RegisterPowerSettingNotification(window,&LidGuid,DEVICE_NOTIFY_WINDOW_HANDLE);check(power!=nullptr,L"Lid notifications unavailable.");check(WTSRegisterSessionNotification(window,NOTIFY_FOR_THIS_SESSION),L"Session notifications unavailable.");
         if(!smoke)wallpaper=std::make_unique<Wallpaper>(window);detect();addTray();renderer=std::thread([this]{renderLoop();});SetTimer(window,1,1000,nullptr);
     }
     void preview(){if(!prefs.preview||!prefs.enabled||locked||!bounds)return;reset();manual=true;demo=now()+2;if(smoke){testPreview=true;started=now();}SetTimer(window,1,16,nullptr);}
@@ -56,9 +56,11 @@ public:
     void menu(){HMENU menu=CreatePopupMenu();AppendMenuW(menu,MF_STRING|(prefs.enabled?MF_CHECKED:0),Enable,L"Enable");AppendMenuW(menu,MF_STRING,SettingsId,L"Settings");if(prefs.preview)AppendMenuW(menu,MF_STRING,Preview,L"Preview");AppendMenuW(menu,MF_STRING,Quit,L"Quit");POINT point;GetCursorPos(&point);SetForegroundWindow(window);int id=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,point.x,point.y,0,window,nullptr);DestroyMenu(menu);PostMessageW(window,WM_NULL,0,0);if(id)command(id,0);}
     void openSettings();
     void command(int id,int notification){
+        // Opening/closing the combo must not reset its current selection or dismiss its list.
+        if(id==Strength&&notification!=CBN_SELCHANGE)return;
         switch(id){case Enable:prefs.enabled=!prefs.enabled;if(!prefs.enabled)reset();save();break;
         case SettingsId:openSettings();break;case Quit:DestroyWindow(window);break;case Preview:preview();break;
-        case Strength:if(notification==CBN_SELCHANGE){prefs.normal=SendDlgItemMessageW(settingsWindow,Strength,CB_GETCURSEL,0,0)==1;save();}break;
+        case Strength:prefs.normal=SendDlgItemMessageW(settingsWindow,Strength,CB_GETCURSEL,0,0)==1;save();break;
         case LockBlur:prefs.lockBlur=!prefs.lockBlur;if(!prefs.lockBlur){restore();cached={};}save();break;
         case Startup:if(!smoke)startup(!prefs.startup);prefs.startup=!prefs.startup;save();break;
         case ShowPreview:prefs.preview=!prefs.preview;if(!prefs.preview&&manual)reset();save();break;}
@@ -96,7 +98,7 @@ LRESULT CALLBACK AppProc(HWND hwnd,UINT message,WPARAM w,LPARAM l){auto app=rein
         case WM_DISPLAYCHANGE:app->detect();return 0;
         case WM_WTSSESSION_CHANGE:if(w==WTS_SESSION_LOCK){app->locked=true;app->curve.clear();app->lid.reset();app->manual=false;app->demo=-1;app->hide();SetThreadExecutionState(ES_CONTINUOUS);if(app->prefs.enabled&&app->prefs.lockBlur&&!app->cached.pixels.empty()&&app->wallpaper)app->wallpaper->requestApply(app->cached,app->prefs.normal);}else if(w==WTS_SESSION_UNLOCK){app->locked=false;app->reset();}return 0;
         case WM_POWERBROADCAST:
-            if(w==PBT_POWERSETTINGCHANGE){auto setting=reinterpret_cast<POWERBROADCAST_SETTING*>(l);if(setting&&setting->PowerSetting==LidGuid&&setting->DataLength==sizeof(DWORD)){DWORD open;memcpy(&open,setting->Data,sizeof(open));if(!app->manual&&!app->locked&&!app->suspended&&app->prefs.enabled){if(app->lid.receive(open,now())){app->hide();app->progress(0);app->restore();}if(app->lid.pending)SetTimer(hwnd,1,16,nullptr);}}}
+            if(w==PBT_POWERSETTINGCHANGE){auto setting=reinterpret_cast<POWERBROADCAST_SETTING*>(l);if(setting&&setting->PowerSetting==LidGuid&&setting->DataLength==sizeof(DWORD)){DWORD open;memcpy(&open,setting->Data,sizeof(open));if(open<=1){bool opened=app->lid.receive(open,now());app->report(open?L"Windows lid state: open (no angle available).":L"Windows lid state: closed.");if(app->manual||app->locked||app->suspended||!app->prefs.enabled){app->lid.pending=0;}else{if(opened){app->hide();app->progress(0);app->restore();}if(app->lid.closeReady(now()))app->progress(1);}}}}
             else if(w==PBT_APMSUSPEND){app->suspended=true;app->reset();}else if(w==PBT_APMRESUMEAUTOMATIC||w==PBT_APMRESUMESUSPEND){app->suspended=false;app->detect();}return TRUE;
         case WM_CLOSE:DestroyWindow(hwnd);return 0;case WM_DESTROY:app->shutdown();return 0;
         }
@@ -104,7 +106,8 @@ LRESULT CALLBACK AppProc(HWND hwnd,UINT message,WPARAM w,LPARAM l){auto app=rein
     return DefWindowProcW(hwnd,message,w,l);
 }
 int selfTest(){std::filesystem::create_directories(L"artifacts");std::ofstream log(L"artifacts/self-test.txt");int failed=0;auto test=[&](bool ok,const char* text){log<<(ok?"PASS ":"FAIL ")<<text<<"\n";if(!ok)++failed;};
-    LidInput input;input.receive(0,1);test(!input.closeReady(2),"Initial closed notification never triggers blur");input.receive(1,3);input.receive(0,4);input.receive(1,4.05);test(!input.closeReady(5),"Short false close pulse is cancelled by open");input.receive(0,6);test(!input.closeReady(6.05)&&input.closeReady(6.13),"Close requires stable 120ms transition");test(input.expired(8),"Missing open event cannot leave blur stuck");input.reset();input.receive(0,9);test(!input.closeReady(10),"Resume/unlock resets stale close state");input.receive(1,11);input.receive(999,12);test(!input.closeReady(13),"Invalid lid payload is ignored");
+    LidInput input;input.receive(0,1);test(!input.closeReady(2),"Initial closed notification never triggers blur");input.receive(1,3);input.receive(0,4);input.receive(1,4.05);test(!input.closeReady(5),"Open cancels an unconsumed close event");input.receive(0,6);test(input.closeReady(6),"Close starts immediately without extra debounce delay");test(input.expired(8),"Missing open event cannot leave blur stuck");input.reset();input.receive(0,9);test(!input.closeReady(10),"Unknown initial state never triggers close");input.receive(1,11);input.receive(999,12);test(!input.closeReady(13),"Invalid lid payload is ignored");
+    App app;app.smoke=true;app.lid.receive(1,1);app.reset();app.lid.receive(0,2);test(app.lid.closeReady(2),"Pause/preview reset preserves open baseline for next real close");
     test(Curve::smooth(-1)==0&&Curve::smooth(2)==1,"Smoothstep bounds");Curve c;c.set(1,0,.6);test(std::abs(c.value(.3)-.5)<1e-6,"Close midpoint");c.set(0,.3,.4);test(std::abs(c.value(.3)-.5)<1e-6&&c.value(.71)==0,"Continuous reversal and open");c.clear();test(c.value(1)==0,"Immediate reset");Settings settings;test(settings.enabled&&settings.startup&&!settings.preview&&!settings.lockBlur&&!settings.normal,"Accessory defaults");
     Frame frame(960,540);for(int y=0;y<frame.height;++y)for(int x=0;x<frame.width;++x)frame.pixels[size_t(y)*frame.width+x]=0xff000000|((x%20<6)?0:0xeeeeee);
     test(blur(frame,0,false).pixels==frame.pixels,"Zero strength preserves pixels");auto start=now();auto output=blur(frame,1,false);test(output.pixels[20*960+2]!=frame.pixels[20*960+2],"Gaussian softens stripes");test((output.pixels[20*960+2]&255)>(output.pixels[500*960+2]&255),"Blur tapers toward hinge");test(resize(frame,480).height==270,"Snapshot aspect ratio");test(hash({1,2,3})=="039058C6F2C0CB492C533B0A4D14EF77CC0F78ABCCCED5287D84A1A2011CFB81", "SHA256 recovery fingerprint");

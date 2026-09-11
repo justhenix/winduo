@@ -85,7 +85,7 @@ struct LidInput {
     bool receive(DWORD value,double time){
         if(value>1)return false;
         if(value==1){bool changed=state==0;state=1;pending=expires=0;return changed;}
-        if(state==1)pending=time+.12;
+        if(state==1)pending=time;
         state=0;return false;
     }
     bool closeReady(double time){if(pending&&time>=pending){pending=0;expires=time+1.5;return true;}return false;}
