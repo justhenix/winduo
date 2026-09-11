@@ -1,0 +1,13 @@
+bin/
+obj/
+artifacts/
+.vs/
+*.user
+
+# Local agent instructions and audit output
+anti-slop/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.codex/
+.agents/
