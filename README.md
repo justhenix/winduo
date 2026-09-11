@@ -2,6 +2,8 @@
 Slight iPhone Duo / Mac-style desktop blur for a normal Windows laptop.
 Native C++ / Win32.
 
+![WinDuo tilt blur showcase](assets/showcase.png)
+
 Most Windows laptops do not have a lid-angle sensor. MacBooks do. WinDuo cannot track your hand on the hinge.
 
 ## What actually works

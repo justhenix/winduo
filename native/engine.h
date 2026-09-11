@@ -149,12 +149,15 @@ inline void projectFold(const Frame& source, const uint32_t* soft_pixels, int so
         const uint32_t* soft_r0 = soft_pixels + size_t(soft_y0) * soft_w;
         const uint32_t* soft_r1 = soft_pixels + size_t(soft_y1) * soft_w;
         
-        double blur_weight = smoothstep(0.06, 0.45, h);
+        // Natural depth-of-field transition:
+        // Anchored lower ~18% stays sharp and legible, mid-screen gracefully defocuses,
+        // upper 35% transitions to 100% heavy frosted bokeh.
+        double blur_weight = smoothstep(0.18, 0.70, h);
         int w = std::clamp(int(blur_weight * 256.0), 0, 256);
         
-        double frost = p * smoothstep(0.08, 0.55, h);
-        double shade = 1.0 - p * 0.07 * h;
-        double feather = std::max(0.0015, 0.012 * p);
+        double frost = p * smoothstep(0.20, 0.72, h);
+        double shade = 1.0 - p * 0.06 * h;
+        double feather = std::max(0.002, 0.008 * p);
         
         int x_left = std::clamp(int((0.5 - 0.5 / scale_x) * double(W - 1)), 0, W - 1);
         int x_right = std::clamp(int((0.5 + 0.5 / scale_x) * double(W - 1) + 1.0), 0, W - 1);
@@ -163,11 +166,6 @@ inline void projectFold(const Frame& source, const uint32_t* soft_pixels, int so
         if (x_right < W - 1) std::fill_n(out_row + x_right + 1, (W - 1) - x_right, 0xff000000);
         
         double inv_w = 1.0 / std::max(1, W - 1);
-        double aspect = double(W) / double(std::max(1, H));
-        double r_corner = 0.032 * p;
-        double r_u = r_corner / aspect;
-        double r_h = r_corner;
-        
         for (int x = x_left; x <= x_right; ++x) {
             double x_norm = double(x) * inv_w;
             double u = 0.5 + (x_norm - 0.5) * scale_x;
@@ -176,24 +174,9 @@ inline void projectFold(const Frame& source, const uint32_t* soft_pixels, int so
                 continue;
             }
             
-            double cu = std::min(u, 1.0 - u);
-            double ch = 1.0 - h;
-            double edge_dist;
-            if (r_corner > 0.001 && cu < r_u && ch < r_h) {
-                double du = (r_u - cu) / r_u;
-                double dh = (r_h - ch) / r_h;
-                double dist_sq = du * du + dh * dh;
-                if (dist_sq > 1.0) {
-                    out_row[x] = 0xff000000;
-                    continue;
-                }
-                edge_dist = r_h * (1.0 - std::sqrt(dist_sq));
-            } else {
-                edge_dist = std::min(cu, ch);
-            }
-            
-            double corner = (1.0 - smoothstep(0.0, 0.22, cu)) * h;
-            double lighting = shade * (1.0 - p * 0.18 * corner);
+            double edge_dist = std::min({u, 1.0 - u, 1.0 - h});
+            double corner = (1.0 - smoothstep(0.0, 0.22, std::min(u, 1.0 - u))) * h;
+            double lighting = shade * (1.0 - p * 0.16 * corner);
             int lit = std::clamp(int(lighting * 256.0), 0, 256);
             
             double sx = u * double(W - 1);
