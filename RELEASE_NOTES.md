@@ -1,3 +1,9 @@
+WinDuo 0.3.3
+
+- Refined optical depth-of-field transition: lower ~18% stays sharp and legible, mid-screen gracefully defocuses, upper 35% in heavy frosted bokeh.
+- Clean trapezoid edges: subpixel straight-edge feathering against the dark void.
+- Added showcase screenshot to README.
+
 WinDuo 0.3.2
 
 - Heavy frosted glass defocus: increased blur sigma to 60 / 110 / 175 px at 1080p.
