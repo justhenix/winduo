@@ -8,6 +8,7 @@ class GpuBlur {
     ComPtr<ID2D1Factory1> factory;ComPtr<ID2D1Device> d2d;ComPtr<ID2D1DeviceContext> draw;
     ComPtr<ID3D11Texture2D> target,staging;ComPtr<ID2D1Bitmap1> bitmap,input;ComPtr<ID2D1Effect> gaussian;
     int width=0,height=0;bool failed=false;
+    std::vector<uint32_t> soft_cache;
     void initialize(int w,int h){
         winrt::check_hresult(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_HARDWARE,nullptr,D3D11_CREATE_DEVICE_BGRA_SUPPORT,nullptr,0,D3D11_SDK_VERSION,&device,nullptr,&context));
         D2D1_FACTORY_OPTIONS options{};winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,__uuidof(ID2D1Factory1),&options,reinterpret_cast<void**>(factory.GetAddressOf())));
@@ -23,21 +24,30 @@ class GpuBlur {
     }
 public:
     bool usingGpu() const {return device!=nullptr&&!failed;}
-    void clear(){gaussian.Reset();input.Reset();bitmap.Reset();staging.Reset();target.Reset();draw.Reset();d2d.Reset();factory.Reset();context.Reset();device.Reset();width=height=0;}
+    void clear(){gaussian.Reset();input.Reset();bitmap.Reset();staging.Reset();target.Reset();draw.Reset();d2d.Reset();factory.Reset();context.Reset();device.Reset();soft_cache.clear();soft_cache.shrink_to_fit();width=height=0;}
     Frame render(const Frame& source,double p,int strength){
+        p = std::clamp(p, 0.0, 1.0);
+        if (p <= 0.0 || source.pixels.empty() || source.width <= 0 || source.height <= 0) return source;
         if(failed)return blur(source,p,strength);
         try {
             if(width!=source.width||height!=source.height){clear();initialize(source.width,source.height);}
+            if(soft_cache.size()<size_t(width)*height) soft_cache.resize(size_t(width)*height);
             winrt::check_hresult(input->CopyFromMemory(nullptr,source.pixels.data(),source.width*4));
-            winrt::check_hresult(gaussian->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,float(blurSigma(strength)*height/1080.0*p)));
+            float sigma = float(blurSigma(strength) * height / 1080.0 * p);
+            winrt::check_hresult(gaussian->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,std::max(0.1f, sigma)));
             draw->BeginDraw();draw->Clear(D2D1::ColorF(0,0,0,1));draw->DrawImage(gaussian.Get());winrt::check_hresult(draw->EndDraw());
-            context->CopyResource(staging.Get(),target.Get());Frame result(width,height);D3D11_MAPPED_SUBRESOURCE mapped{};winrt::check_hresult(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped));
-            for(int y=0;y<height;++y){auto pixels=reinterpret_cast<const uint32_t*>(static_cast<const BYTE*>(mapped.pData)+size_t(y)*mapped.RowPitch);
-                double weight=p*(1-.35*y/std::max(1,height-1)),dim=1-blurDim(strength)*p;
-                for(int x=0;x<width;++x){auto original=source.pixels[size_t(y)*width+x],soft=pixels[x];uint32_t out=0xff000000;
-                    for(int c=0;c<3;++c){int shift=c*8;out|=uint32_t((((original>>shift)&255)*(1-weight)+((soft>>shift)&255)*weight)*dim)<<shift;}result.pixels[size_t(y)*width+x]=out;
-                }
-            }context->Unmap(staging.Get(),0);return result;
+            context->CopyResource(staging.Get(),target.Get());
+            D3D11_MAPPED_SUBRESOURCE mapped{};
+            winrt::check_hresult(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped));
+            for(int y=0; y<height; ++y){
+                memcpy(soft_cache.data() + size_t(y) * width,
+                       static_cast<const BYTE*>(mapped.pData) + size_t(y) * mapped.RowPitch,
+                       size_t(width) * 4);
+            }
+            context->Unmap(staging.Get(),0);
+            Frame result(width,height);
+            projectFold(source, soft_cache.data(), width, height, p, result);
+            return result;
         }catch(...){clear();failed=true;return blur(source,p,strength);}
     }
 };

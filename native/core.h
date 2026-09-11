@@ -38,8 +38,8 @@ inline std::filesystem::path folder() {
     PWSTR raw{}; winrt::check_hresult(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &raw));
     auto p = std::filesystem::path(raw) / L"WinDuo"; CoTaskMemFree(raw); std::filesystem::create_directories(p); return p;
 }
-inline double blurSigma(int strength){return strength<=0?24:strength==1?40:64;}
-inline double blurDim(int strength){return strength<=0?.09:strength==1?.12:.15;}
+inline double blurSigma(int strength){return strength<=0?60:strength==1?110:175;}
+inline double blurDim(int strength){return strength<=0?.08:strength==1?.10:.12;}
 struct Settings {
     int strength=1;
     bool enabled=true, lockBlur=false, startup=true, holdAwake=true, webcam=false;
@@ -54,6 +54,7 @@ struct Settings {
         wchar_t value[4096]{};GetPrivateProfileStringW(L"WinDuo",L"Camera",L"",value,4096,ini.c_str());camera=value;
         auto number=[&](const wchar_t* k){GetPrivateProfileStringW(L"WinDuo",k,L"0",value,4096,ini.c_str());double n=wcstod(value,nullptr);return std::isfinite(n)?n:0;};
         openMean=number(L"OpenMean");openDelta=number(L"OpenDelta");closedMean=number(L"ClosedMean");closedDelta=number(L"ClosedDelta");
+        if(openDelta<-0.35||openDelta>0.35||closedDelta<-0.35||closedDelta>0.50||(openDelta==0&&closedDelta==0&&calibratedOpen)){calibratedOpen=calibratedClosed=false;openMean=openDelta=closedMean=closedDelta=0;}
     }
     void save() const {
         auto ini=folder()/L"settings.ini";
@@ -67,7 +68,7 @@ struct Settings {
 inline void startup(bool enable) {
     HKEY key{}; check(RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,nullptr,0,KEY_SET_VALUE,nullptr,&key,nullptr)==ERROR_SUCCESS,L"Startup registry unavailable.");
     LSTATUS result{};
-    if(enable) { wchar_t path[32768]{}; GetModuleFileNameW(nullptr,path,32768); std::wstring command=L"\""+std::wstring(path)+L"\""; result=RegSetValueExW(key,L"WinDuo",0,REG_SZ,reinterpret_cast<const BYTE*>(command.c_str()),static_cast<DWORD>((command.size()+1)*2)); }
+    if(enable) { wchar_t path[32768]{}; GetModuleFileNameW(nullptr,path,32768); std::wstring command=L"\""+std::wstring(path)+L"\" --silent"; result=RegSetValueExW(key,L"WinDuo",0,REG_SZ,reinterpret_cast<const BYTE*>(command.c_str()),static_cast<DWORD>((command.size()+1)*2)); }
     else {result=RegDeleteValueW(key,L"WinDuo"); if(result==ERROR_FILE_NOT_FOUND) result=ERROR_SUCCESS;}
     RegCloseKey(key); check(result==ERROR_SUCCESS,L"Could not update startup.");
 }
@@ -78,6 +79,9 @@ struct Curve {
     void set(double p,double t,double d){from=value(t);target=std::clamp(p,0.0,1.0);start=t;duration=d;}
     void clear(){from=target=duration=0;}
 };
+inline double smoothstep(double edge0, double edge1, double x) {
+    return (edge1 <= edge0) ? (x >= edge1 ? 1.0 : 0.0) : Curve::smooth((x - edge0) / (edge1 - edge0));
+}
 struct LidInput {
     int state=-1;
     double pending=0;
@@ -115,7 +119,7 @@ inline std::optional<RECT> panel() {
 inline bool fullscreen(RECT area){
     QUERY_USER_NOTIFICATION_STATE state{};if(SUCCEEDED(SHQueryUserNotificationState(&state))&&(state==QUNS_RUNNING_D3D_FULL_SCREEN||state==QUNS_NOT_PRESENT))return true;
     auto window=GetForegroundWindow();wchar_t name[128]{};GetClassNameW(window,name,128);
-    if(!wcscmp(name,L"Progman")||!wcscmp(name,L"WorkerW")||!wcscmp(name,L"Shell_TrayWnd"))return false;
+    if(!wcscmp(name,L"Progman")||!wcscmp(name,L"WorkerW")||!wcscmp(name,L"Shell_TrayWnd")||!wcsncmp(name,L"WinDuo.",8))return false;
     RECT r{};return GetWindowRect(window,&r)&&r.left<=area.left&&r.top<=area.top&&r.right>=area.right&&r.bottom>=area.bottom;
 }
 }

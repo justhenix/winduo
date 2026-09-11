@@ -1,3 +1,12 @@
+WinDuo 0.3.2
+
+- Heavy frosted glass defocus: increased blur sigma to 60 / 110 / 175 px at 1080p.
+- Complete bokeh transition: upper screen transitions to 100% blur so phone cameras cannot reconstruct text edges.
+- Frosted glass scattering: added translucent shadow lifting and diffuse luminous sheen matching Bendy.
+- Hardware card perspective: added anti-aliased rounded top card corners and soft corner vignetting against the black void.
+- Responsive lid tilt tracking: mapped camera tilt curve to begin proportional folding immediately upon closing, removing the deadband that delayed tilt until the lid was nearly shut.
+- Uplift damping: asymmetric inertia eliminates jitter and flutter when reopening the lid.
+
 WinDuo 0.3.1
 
 - Replace Slight/Normal with a three-step Low / Medium / High blur slider.
